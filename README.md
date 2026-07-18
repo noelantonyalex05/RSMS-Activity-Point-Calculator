@@ -8,8 +8,7 @@ what's still pending.
 
 ## Why this exists
 
-The RSMS "Activity Point Form" only shows submissions for one Class Code
-+ Category combination at a time, with no overview page. Checking your
+The RSMS "Activity Point Form" only shows submissions for one Class Code and Category combination at a time, with no overview page. Checking your
 total points means clicking through every combination by hand. This
 script does that for you and builds a formatted report.
 
