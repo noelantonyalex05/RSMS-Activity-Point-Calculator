@@ -108,55 +108,13 @@ By (...)" are all really "who ran this". These known aliases are merged
 into one canonical column (see `COLUMN_ALIASES` near the top of the
 script) instead of each producing a separate mostly-empty column.
 
-### Finding more aliases: `discover_column_aliases.py`
 
-`COLUMN_ALIASES` was built by hand from a first scrape, which only shows
-field names for categories you've actually submitted to. To find field
-names for *every* category — including ones with zero submissions — this
-script reveals each category's entry form (never touches SUBMIT) and
-reads off its field labels directly:
-
-```bash
-python discover_column_aliases.py
-```
-
-It prints every category's field labels, saves the raw mapping to
-`form_fields_by_category.json`, and — using a conservative keyword-based
-rule set — proposes merges for fields it's confident mean the same thing,
-writing them to `proposed_column_aliases.py` as a ready-to-paste
-`COLUMN_ALIASES` dict. Anything it isn't confident about (e.g. "Name of
-event" vs "Name of fest" — genuinely different fields, not just a label
-difference) is listed separately as unclustered rather than guessed at,
-since a wrong merge silently loses data. Review the unclustered list by
-hand; if you find a real duplicate, add a keyword rule to
-`CANONICAL_RULES` in the discovery script and re-run, or just add the
-entry to `COLUMN_ALIASES` in the main script directly.
-
-## Troubleshooting
-
-**A dropdown/button isn't found, or selectors seem wrong for your
-version of the site:**
-
-```bash
-python inspect_activity_page.py
-```
-
-This opens the same login flow, then dumps every `<select>`'s id/name and
-options, every button's id/name/value, and the full page HTML to
-`activity_page.html` — all without needing DevTools (which the site
-blocks). Use this to see what actually changed.
-
-**A specific Class Code + Category combination keeps failing:**
-It gets retried automatically, then logged to the `Skipped` sheet with
-the error message so you know what to check by hand.
 
 ## Files
 
 | File | Purpose |
 |---|---|
 | `activity_points_tracker.py` | Main script — login, scrape, format, save |
-| `discover_column_aliases.py` | Optional — scans every category's entry form to find fields worth merging in `COLUMN_ALIASES` |
-| `inspect_activity_page.py` | Optional debugging tool — dumps raw page structure |
 | `README.md` | This file |
 
 ## License
