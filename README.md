@@ -84,30 +84,6 @@ python activity_points_tracker.py
 - When it finishes (or if you stop it early), open `activity_points.xlsx`
   — the Summary tab is first.
 
-## How the Excel output stays correctly aligned
-
-Different categories use genuinely different table columns on the site —
-Sports/Games might have "Level" and "Points" columns where Leadership has
-"Documentary evidence" and "Rating By Faculty". The tracker matches
-columns **by name**, not position: a shared field like "Start Date"
-always lands in the same Excel column no matter which category it came
-from, and a category-specific field just gets its own new column instead
-of overwriting something unrelated.
-
-Point values are similarly auto-detected: any field whose name contains
-"point" or "rating" (other than the status field itself) is treated as
-the numeric point value for that row, since the exact label varies by
-category.
-
-On top of that, some fields are the *same concept* across categories but
-use a different label each time — for example "Name of professional
-society...", "Name of the organizing instituition and Place", "Name of
-the offering agency", "Name of the Company and Address", and "Organized
-By (...)" are all really "who ran this". These known aliases are merged
-into one canonical column (see `COLUMN_ALIASES` near the top of the
-script) instead of each producing a separate mostly-empty column.
-
-
 
 ## Files
 
