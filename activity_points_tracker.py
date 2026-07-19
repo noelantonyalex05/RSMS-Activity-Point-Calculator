@@ -93,18 +93,28 @@ THIN_BORDER = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
 # Any header on the right maps to the canonical name on the left, so they
 # share one Excel column instead of each spawning its own.
 COLUMN_ALIASES = {
-    "Organizing Institution / Society / Company": [
-        "Name of professional society/ Association name/Name of Club etc.",
-        "Name of the organizing instituition and Place",
-        "Name of the offering agency",
-        "Name of the Company and Address",
-        "Organized By (name of institution with place)",
+    'Evidence / Certificate': [
+        'Certificate/Letter from authorities (File Size<500kb)',
+        'Certificate (File Size<500kb)',
+        'Certificate/ Documentary evidence (File Size<500kb)',
+        'MOOC with final exam and assessment certificate in the class 2026S7CU',
+        'Certificate/Letter from Authorities/Documentary evidence (File Size<500kb)',
+        'Documentary evidence and photo of product if any (File Size<500kb)',
+        'Documentary evidence (File Size<500kb)',
     ],
-    "Evidence / Certificate": [
-        "Documentary evidence (File Size<500kb)",
-        "Certificate (File Size<500kb)",
-        "Certificate/ Documentary evidence (File Size<500kb)",
-        "Certificate/Letter from Authorities/Documentary evidence (File Size<500kb)",
+    'Organizing Institution / Society / Company': [
+        'Name of the organizing instituition and Place',
+        'Name of the offering agency',
+        'Name of proffesional society',
+        'Organized By (name of institution with place)',
+        'Organized by (name of institution with place)',
+        'Name of the Company and Address',
+        'StartUp Company (Registered Legally)',
+        'Nameof company',
+        'Awarding agency',
+        'Leadership and Management - Society/Association/Club in the class 2026S7CU',
+        'Club activities',
+        'Name of professional society/ Association name/Name of Club etc.',
     ],
 }
 
