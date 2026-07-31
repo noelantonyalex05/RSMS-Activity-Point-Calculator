@@ -3,8 +3,8 @@
 A small automation tool for students at Rajagiri (RSET) to pull together
 every Activity Point submission scattered across the RSMS portal's
 Class Code x Category dropdown grid, and get one Excel file with a real
-summary: total approved points, a breakdown by category, and a list of
-what's still pending.
+summary: total approved points, a breakdown by category, and lists of
+what's still pending or was rejected.
 
 ## Why this exists
 
@@ -25,12 +25,14 @@ script does that for you and builds a formatted report.
 5. Writes everything to `activity_points.xlsx`:
    - **Summary** sheet — total approved points, points broken down into
      Professional / Extracurricular / Leadership (auto-bucketed from each
-     entry's own category label), a listing of approved submissions with
-     their point value, and a listing of pending submissions.
+     entry's own category label) with approved / pending / rejected counts
+     per category, a listing of approved submissions with their point
+     value, a listing of pending submissions, and a listing of rejected
+     submissions (with reason, when the portal provides one).
    - **ActivityPoints** sheet — every scraped row, colour-coded by status
-     (green = approved, yellow = pending). Fields that mean the same
-     thing but are labeled differently per category (e.g. "Name of the
-     organizing instituition", "Name of the offering agency", "Organized
+     (green = approved, yellow = pending, red = rejected). Fields that mean
+     the same thing but are labeled differently per category (e.g. "Name of
+     the organizing instituition", "Name of the offering agency", "Organized
      By...") are merged into one shared column instead of each spawning
      its own.
    - **Skipped** sheet — only appears if a combination failed after
@@ -58,7 +60,7 @@ never loses what's already been scraped.
 
 Requires Python 3.8+.
 
-```bash
+```
 pip install playwright openpyxl
 playwright install chromium
 ```
@@ -66,14 +68,14 @@ playwright install chromium
 On Windows, if `playwright` isn't recognized as a command after
 installing, run it through Python instead:
 
-```bash
+```
 python -m pip install playwright openpyxl
 python -m playwright install chromium
 ```
 
 ## Usage
 
-```bash
+```
 python activity_points_tracker.py
 ```
 
@@ -81,16 +83,14 @@ python activity_points_tracker.py
 - The script waits (no timeout) until you reach the student home page,
   then takes over from there automatically.
 - Progress prints to the console as it works through each combination.
-- When it finishes (or if you stop it early), open `activity_points.xlsx`
-  — the Summary tab is first.
-
+- When it finishes (or if you stop it early), open `activity_points.xlsx` — the Summary tab is first.
 
 ## Files
 
-| File | Purpose |
-|---|---|
-| `activity_points_tracker.py` | Main script — login, scrape, format, save |
-| `README.md` | This file |
+| File                         | Purpose                                   |
+| ----------------------------- | ------------------------------------------ |
+| `activity_points_tracker.py`  | Main script — login, scrape, format, save |
+| `README.md`                   | This file                                 |
 
 ## License
 
