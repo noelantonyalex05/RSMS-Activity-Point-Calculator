@@ -24,8 +24,13 @@ Confirmed site behavior:
   value lands in the right place regardless of which category it came
   from.
 
-Output: activity_points.xlsx, saved after every single combination so
-progress is never lost if the script errors out or is interrupted.
+Output: <STUDENT NAME>.xlsx (the name is read from Home.asp's "Logged In
+User : ..." line; falls back to activity_points.xlsx if it can't be
+found), saved after every single combination so progress is never lost
+if the script errors out or is interrupted. If the target file already
+exists it's simply replaced - unless it's currently locked (e.g. open in
+Excel), in which case a new file with a numeric suffix (e.g.
+"..._1.xlsx") is used instead rather than crashing.
   - Sheet "Summary"       - total points, category breakdown (approved /
                              pending / rejected counts), pending list,
                              rejected list
@@ -43,6 +48,7 @@ Run:
     python activity_points_tracker.py
 """
 
+import os
 import re
 import time
 
@@ -57,6 +63,10 @@ from playwright.sync_api import sync_playwright
 # ----------------------------------------------------------------------
 
 LOGIN_URL = "https://rajagiritech.ac.in/stud/KTU/Student/studentlogin/login.php"
+# Base/fallback output filename. At runtime this is personalized with the
+# logged-in student's name (see build_output_filename), e.g.
+# "activity_points_JOHN_DOE.xlsx". This constant is only used as-is if the
+# student's name can't be found on Home.asp.
 OUTPUT_FILE = "activity_points.xlsx"
 DELAY_SECONDS = 1.0            # pause between combinations, be polite to the server
 OPTIONS_WAIT_TIMEOUT = 15      # seconds to wait for a <select>'s options to populate
@@ -448,6 +458,124 @@ class SummaryStats:
 
 
 # ----------------------------------------------------------------------
+# Output filename handling
+# ----------------------------------------------------------------------
+
+def sanitize_filename_part(text):
+    """Strip characters that aren't safe in Windows/Mac/Linux filenames
+    and collapse whitespace, so a student's name can be used as part of
+    a filename."""
+    if not text:
+        return ""
+    text = text.strip().strip('"').strip()
+    text = re.sub(r'[\\/:*?"<>|]', "", text)
+    text = re.sub(r"\s+", "_", text)
+    return text
+
+
+def get_student_name(page):
+    """Best-effort scrape of the logged-in student's name from Home.asp,
+    where the page shows something like: Logged In User : JOHN DOE
+
+    This site is a classic-ASP frameset - the nav bar showing the name
+    typically lives in its own frame, not the top-level document - so we
+    search the text of every frame, not just page.inner_text("body").
+    Returns None if the pattern can't be found anywhere, so callers can
+    fall back to a generic filename instead of failing the whole run.
+    """
+    texts = []
+    try:
+        texts.append(page.inner_text("body"))
+    except Exception:
+        pass
+    for frame in page.frames:
+        try:
+            texts.append(frame.inner_text("body"))
+        except Exception:
+            continue
+    body_text = "\n".join(texts)
+
+    # "Logged In User" may or may not have a space before the colon, and
+    # the name may or may not be wrapped in quotes, so handle both.
+    m = re.search(r'LOGGED\s+IN\s+USER\s*:\s*"([^"]+)"', body_text, re.IGNORECASE)
+    if not m:
+        m = re.search(r"LOGGED\s+IN\s+USER\s*:\s*([^\n\r]+)", body_text, re.IGNORECASE)
+    if not m:
+        print(f">>> (debug) scanned {len(page.frames)} frame(s) but found no "
+              f"'Logged In User' text. Portal layout may differ from expected.")
+        return None
+
+    name = m.group(1).strip().strip('"').strip()
+    return name or None
+
+
+def build_output_filename(student_name):
+    """Personalize the output filename with the student's name when
+    available, e.g. 'JOHN_DOE.xlsx'. Falls back to the generic
+    OUTPUT_FILE name if the name couldn't be found."""
+    safe_name = sanitize_filename_part(student_name)
+    if safe_name:
+        _, ext = os.path.splitext(OUTPUT_FILE)
+        return f"{safe_name}{ext}"
+    return OUTPUT_FILE
+
+
+def can_write_to(path):
+    """True if `path` can be opened for writing right now - i.e. it
+    doesn't exist yet, or it exists but isn't locked by another program
+    (like having the file open in Excel)."""
+    try:
+        with open(path, "a"):
+            pass
+        return True
+    except OSError:
+        return False
+
+
+def resolve_output_path(base_path):
+    """Return a path that's safe to write to for this run.
+    - If base_path doesn't exist yet, or exists but is writable, it's
+      used as-is (a normal save() will simply replace/overwrite it).
+    - If it exists and is locked (e.g. currently open in Excel), the
+      first available "<base>_1.xlsx", "<base>_2.xlsx", ... is used
+      instead, so the run never crashes over this."""
+    if not os.path.exists(base_path) or can_write_to(base_path):
+        return base_path
+    stem, ext = os.path.splitext(base_path)
+    n = 1
+    while True:
+        candidate = f"{stem}_{n}{ext}"
+        if not os.path.exists(candidate) or can_write_to(candidate):
+            return candidate
+        n += 1
+
+
+def save_workbook(wb, path):
+    """Save wb to path, replacing it if it already exists. If the file
+    can't be written to right now (e.g. it's open in Excel), falls back
+    to a new filename with a numeric suffix instead of crashing, and
+    returns whatever path was actually used so the caller can keep using
+    it for subsequent saves this run."""
+    try:
+        wb.save(path)
+        return path
+    except PermissionError:
+        stem, ext = os.path.splitext(path)
+        n = 1
+        new_path = path
+        while True:
+            candidate = f"{stem}_{n}{ext}"
+            if not os.path.exists(candidate):
+                new_path = candidate
+                break
+            n += 1
+        print(f">>> Couldn't save to '{path}' (likely open in another "
+              f"program). Saving to '{new_path}' instead.")
+        wb.save(new_path)
+        return new_path
+
+
+# ----------------------------------------------------------------------
 # Playwright automation
 # ----------------------------------------------------------------------
 
@@ -537,8 +665,19 @@ def main():
         page.goto(LOGIN_URL)
         print(">>> Please log in with Google manually.")
         page.wait_for_url("**/Home.asp", timeout=0)
-        print(">>> Login detected. Navigating to Activity Point Form...")
+        print(">>> Login detected.")
+        time.sleep(1.5)  # let the frameset's child frames finish loading
 
+        student_name = get_student_name(page)
+        if student_name:
+            print(f">>> Logged in as: {student_name}")
+        else:
+            print(">>> Couldn't find the student's name on Home.asp - "
+                  "using a generic output filename instead.")
+
+        output_path = resolve_output_path(build_output_filename(student_name))
+
+        print(">>> Navigating to Activity Point Form...")
         page.click("text=Activity Point Form")
         page.wait_for_load_state("load")
         form_url = page.url
@@ -580,7 +719,7 @@ def main():
                       f"category={cat_label} after {MAX_RETRIES_PER_COMBO} attempts")
                 skipped_rows.append([class_label, cat_label, str(last_error)])
                 write_skipped_sheet(wb, skipped_rows)
-                wb.save(OUTPUT_FILE)
+                output_path = save_workbook(wb, output_path)
                 time.sleep(DELAY_SECONDS)
                 continue
 
@@ -611,17 +750,17 @@ def main():
 
             builder.autofit()
             stats.write_sheet(wb)
-            wb.save(OUTPUT_FILE)
+            output_path = save_workbook(wb, output_path)
             time.sleep(DELAY_SECONDS)
 
         builder.autofit()
         stats.write_sheet(wb)
-        wb.save(OUTPUT_FILE)
+        output_path = save_workbook(wb, output_path)
 
         print(f"\n>>> Done. Total approved points: {stats.total_approved_points}")
         print(f">>> Pending submissions: {len(stats.pending_rows)}")
         print(f">>> Rejected submissions: {stats.total_rejected_count}")
-        print(f">>> Saved to {OUTPUT_FILE}")
+        print(f">>> Saved to {output_path}")
 
         browser.close()
 
