@@ -6,30 +6,32 @@ Logs into the RSMS student portal, sweeps every Class Code x Category
 combination on the Activity Point Form, scrapes whatever submissions
 exist for each, and writes everything to a nicely formatted Excel file -
 including a Summary sheet with total points, a per-category breakdown,
-and a pending-submissions list.
+and pending / rejected submission lists.
 
 Confirmed site behavior:
-  - Login page: studentlogin/login.php. Google sign-in requires a human,
-    so you log in manually in the browser window this script opens.
-  - Activity.asp has exactly two <select> elements before you interact
-    with anything: [0] = Class Code, [1] = Category.
-  - Clicking "Add Activity" is READ-ONLY - it reveals an entry form AND,
-    below it, a results table (if any submissions exist for that
-    class+category). It does NOT create a new record. The real
-    record-creating action is a separate "SUBMIT" button inside the
-    revealed form, which this script never touches.
-  - Different categories have genuinely different table columns (e.g.
-    Sports/Games has "Level"/"Points" where Leadership has "Documentary
-    evidence"/"Rating By Faculty"). Columns are matched BY NAME so every
-    value lands in the right place regardless of which category it came
-    from.
+- Login page: studentlogin/login.php. Google sign-in requires a human,
+  so you log in manually in the browser window this script opens.
+- Activity.asp has exactly two <select> elements before you interact
+  with anything: [0] = Class Code, [1] = Category.
+- Clicking "Add Activity" is READ-ONLY - it reveals an entry form AND,
+  below it, a results table (if any submissions exist for that
+  class+category). It does NOT create a new record. The real
+  record-creating action is a separate "SUBMIT" button inside the
+  revealed form, which this script never touches.
+- Different categories have genuinely different table columns (e.g.
+  Sports/Games has "Level"/"Points" where Leadership has "Documentary
+  evidence"/"Rating By Faculty"). Columns are matched BY NAME so every
+  value lands in the right place regardless of which category it came
+  from.
 
 Output: activity_points.xlsx, saved after every single combination so
 progress is never lost if the script errors out or is interrupted.
-  - Sheet "Summary"       - total points, category breakdown, pending list
+  - Sheet "Summary"       - total points, category breakdown (approved /
+                             pending / rejected counts), pending list,
+                             rejected list
   - Sheet "ActivityPoints" - every scraped row, one column per unique
                              field name encountered across all categories
-  - Sheet "Skipped"        - only created if a combo failed after retries
+  - Sheet "Skipped"       - only created if a combo failed after retries
 
 Install once:
     pip install playwright openpyxl
@@ -56,7 +58,6 @@ from playwright.sync_api import sync_playwright
 
 LOGIN_URL = "https://rajagiritech.ac.in/stud/KTU/Student/studentlogin/login.php"
 OUTPUT_FILE = "activity_points.xlsx"
-
 DELAY_SECONDS = 1.0            # pause between combinations, be polite to the server
 OPTIONS_WAIT_TIMEOUT = 15      # seconds to wait for a <select>'s options to populate
 MAX_RETRIES_PER_COMBO = 2      # attempts before a combo is logged to Skipped
@@ -84,10 +85,10 @@ KPI_VALUE_FONT = Font(bold=True, size=14, color="2E7D32")
 
 APPROVED_FILL = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
 PENDING_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+REJECTED_FILL = PatternFill(start_color="F8D7DA", end_color="F8D7DA", fill_type="solid")
 
 _thin = Side(style="thin", color="CCCCCC")
 THIN_BORDER = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
-
 
 # Different categories label the same underlying field differently.
 # Any header on the right maps to the canonical name on the left, so they
@@ -143,8 +144,6 @@ def merge_field(row_dict, name, value):
         row_dict[canonical] = value
     elif value and value != existing:
         row_dict[canonical] = f"{existing}; {value}"
-
-
 
 
 class ExcelBuilder:
@@ -264,20 +263,35 @@ def find_points_value(row_dict):
     return total if found_any else 0.0
 
 
+def find_rejection_reason(row_dict):
+    """Best-effort lookup of a rejection reason / remark field, since
+    different category tables may label this differently (or not have
+    one at all)."""
+    for name, value in row_dict.items():
+        name_l = name.lower()
+        if "remark" in name_l or "reason" in name_l:
+            if value:
+                return value
+    return ""
+
+
 class SummaryStats:
     def __init__(self):
         self.bucket_totals = {}
         self.bucket_counts = {}
         self.bucket_pending = {}
+        self.bucket_rejected = {}
         self.total_approved_points = 0.0
         self.total_approved_count = 0
+        self.total_rejected_count = 0
         self.pending_rows = []
         self.approved_rows = []
+        self.rejected_rows = []
 
     def accumulate(self, row_dict):
         """Update running totals from one scraped row. Returns the row's
-        status ('approved' / 'pending' / other, lowercased) so the caller
-        can color the row accordingly."""
+        status ('approved' / 'pending' / 'rejected' / other, lowercased)
+        so the caller can color the row accordingly."""
         status = str(row_dict.get("Point Status", "") or "").strip().lower()
         category_value = row_dict.get("Category")
         bucket = bucket_for(category_value)
@@ -305,10 +319,27 @@ class SummaryStats:
                 "Activity": row_dict.get("Activity"),
                 "Name of event": row_dict.get("Name of event"),
             })
+        elif status == "rejected":
+            self.bucket_rejected[bucket] = self.bucket_rejected.get(bucket, 0) + 1
+            self.total_rejected_count += 1
+            self.rejected_rows.append({
+                "Class Code": row_dict.get("Class Code"),
+                "Selected Category": row_dict.get("Selected Category"),
+                "Category": category_value,
+                "Activity": row_dict.get("Activity"),
+                "Name of event": row_dict.get("Name of event"),
+                "Reason": find_rejection_reason(row_dict),
+            })
+
         return status
 
     def ordered_buckets(self):
-        all_buckets = set(self.bucket_totals) | set(self.bucket_counts) | set(self.bucket_pending)
+        all_buckets = (
+            set(self.bucket_totals)
+            | set(self.bucket_counts)
+            | set(self.bucket_pending)
+            | set(self.bucket_rejected)
+        )
         ordered = [b for b, _ in BUCKET_KEYWORDS if b in all_buckets]
         ordered += sorted(b for b in all_buckets if b not in ordered)
         return ordered
@@ -334,11 +365,15 @@ class SummaryStats:
         ws.cell(row=r, column=1, value="Pending Submissions").font = KPI_LABEL_FONT
         pending_cell = ws.cell(row=r, column=2, value=len(self.pending_rows))
         pending_cell.font = Font(bold=True, size=12, color="BF8F00")
+        r += 1
+        ws.cell(row=r, column=1, value="Rejected Submissions").font = KPI_LABEL_FONT
+        rejected_cell = ws.cell(row=r, column=2, value=self.total_rejected_count)
+        rejected_cell.font = Font(bold=True, size=12, color="C00000")
         r += 2
 
         ws.cell(row=r, column=1, value="Points by Category").font = SUBHEAD_FONT
         r += 1
-        headers = ["Category", "Approved Points", "Approved Count", "Pending Count"]
+        headers = ["Category", "Approved Points", "Approved Count", "Pending Count", "Rejected Count"]
         for ci, h in enumerate(headers, 1):
             cell = ws.cell(row=r, column=ci, value=h)
             cell.font = HEADER_FONT
@@ -350,11 +385,12 @@ class SummaryStats:
             ws.cell(row=r, column=2, value=self.bucket_totals.get(b, 0.0)).border = THIN_BORDER
             ws.cell(row=r, column=3, value=self.bucket_counts.get(b, 0)).border = THIN_BORDER
             ws.cell(row=r, column=4, value=self.bucket_pending.get(b, 0)).border = THIN_BORDER
+            ws.cell(row=r, column=5, value=self.bucket_rejected.get(b, 0)).border = THIN_BORDER
             r += 1
         r += 1
 
         ws.cell(row=r, column=1,
-                value=f"Approved Submissions ({len(self.approved_rows)})").font = SUBHEAD_FONT
+                 value=f"Approved Submissions ({len(self.approved_rows)})").font = SUBHEAD_FONT
         r += 1
         aheaders = ["Class Code", "Selected Category", "Category", "Activity", "Name of event", "Points"]
         for ci, h in enumerate(aheaders, 1):
@@ -372,7 +408,7 @@ class SummaryStats:
         r += 1
 
         ws.cell(row=r, column=1,
-                value=f"Pending Submissions ({len(self.pending_rows)})").font = SUBHEAD_FONT
+                 value=f"Pending Submissions ({len(self.pending_rows)})").font = SUBHEAD_FONT
         r += 1
         pheaders = ["Class Code", "Selected Category", "Category", "Activity", "Name of event"]
         for ci, h in enumerate(pheaders, 1):
@@ -387,8 +423,26 @@ class SummaryStats:
                 cell.fill = PENDING_FILL
                 cell.border = THIN_BORDER
             r += 1
+        r += 1
 
-        widths = [26, 34, 34, 26, 30, 12]
+        ws.cell(row=r, column=1,
+                 value=f"Rejected Submissions ({len(self.rejected_rows)})").font = SUBHEAD_FONT
+        r += 1
+        rheaders = ["Class Code", "Selected Category", "Category", "Activity", "Name of event", "Reason"]
+        for ci, h in enumerate(rheaders, 1):
+            cell = ws.cell(row=r, column=ci, value=h)
+            cell.font = HEADER_FONT
+            cell.fill = HEADER_FILL
+            cell.alignment = HEADER_ALIGN
+        r += 1
+        for rr in self.rejected_rows:
+            for ci, key in enumerate(rheaders, 1):
+                cell = ws.cell(row=r, column=ci, value=rr.get(key))
+                cell.fill = REJECTED_FILL
+                cell.border = THIN_BORDER
+            r += 1
+
+        widths = [26, 34, 34, 26, 30, 30]
         for i, w in enumerate(widths, 1):
             ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -432,7 +486,6 @@ def scrape_one_combo(page, form_url, class_val, cat_val):
 
     class_select = page.locator("select").nth(0)
     category_select = page.locator("select").nth(1)
-
     wait_for_options_populated(class_select)
     wait_for_options_populated(category_select)
 
@@ -459,6 +512,7 @@ def scrape_one_combo(page, form_url, class_val, cat_val):
                 header_cells = cells
             continue  # header row, not data
         scraped.append(cells)
+
     return header_cells, scraped
 
 
@@ -479,8 +533,8 @@ def main():
         browser = p.chromium.launch(headless=False)
         context = browser.new_context()
         page = context.new_page()
-        page.goto(LOGIN_URL)
 
+        page.goto(LOGIN_URL)
         print(">>> Please log in with Google manually.")
         page.wait_for_url("**/Home.asp", timeout=0)
         print(">>> Login detected. Navigating to Activity Point Form...")
@@ -517,12 +571,12 @@ def main():
                     break
                 except (PWTimeoutError, TimeoutError, Exception) as e:
                     last_error = e
-                    print(f"    [{i}/{len(combos)}] class={class_label} "
+                    print(f"  [{i}/{len(combos)}] class={class_label} "
                           f"category={cat_label} -> attempt {attempt} failed: {e}")
                     time.sleep(1.5)
 
             if last_error is not None:
-                print(f"    [{i}/{len(combos)}] SKIPPING class={class_label} "
+                print(f"  [{i}/{len(combos)}] SKIPPING class={class_label} "
                       f"category={cat_label} after {MAX_RETRIES_PER_COMBO} attempts")
                 skipped_rows.append([class_label, cat_label, str(last_error)])
                 write_skipped_sheet(wb, skipped_rows)
@@ -531,7 +585,7 @@ def main():
                 continue
 
             if not scraped_rows:
-                print(f"    [{i}/{len(combos)}] class={class_label} "
+                print(f"  [{i}/{len(combos)}] class={class_label} "
                       f"category={cat_label} -> no submissions")
             else:
                 for cells in scraped_rows:
@@ -544,12 +598,15 @@ def main():
                             merge_field(row_dict, f"Col{idx}", value)
 
                     status = stats.accumulate(row_dict)
-                    fill = APPROVED_FILL if status == "approved" else (
-                        PENDING_FILL if status == "pending" else None
+                    fill = (
+                        APPROVED_FILL if status == "approved" else
+                        PENDING_FILL if status == "pending" else
+                        REJECTED_FILL if status == "rejected" else
+                        None
                     )
                     builder.write_row(row_dict, fill=fill)
 
-                print(f"    [{i}/{len(combos)}] class={class_label} "
+                print(f"  [{i}/{len(combos)}] class={class_label} "
                       f"category={cat_label} -> {len(scraped_rows)} row(s)")
 
             builder.autofit()
@@ -560,9 +617,12 @@ def main():
         builder.autofit()
         stats.write_sheet(wb)
         wb.save(OUTPUT_FILE)
+
         print(f"\n>>> Done. Total approved points: {stats.total_approved_points}")
         print(f">>> Pending submissions: {len(stats.pending_rows)}")
+        print(f">>> Rejected submissions: {stats.total_rejected_count}")
         print(f">>> Saved to {OUTPUT_FILE}")
+
         browser.close()
 
 
