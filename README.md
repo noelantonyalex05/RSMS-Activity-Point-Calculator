@@ -22,7 +22,9 @@ script does that for you and builds a formatted report.
 4. For each combination, it clicks **"Add Activity"** — which only
    *reveals* the entry form and any existing submissions table, it does
    **not** submit anything — and scrapes the results table if one appears.
-5. Writes everything to `activity_points.xlsx`:
+5. Writes everything to an Excel file named after you — read straight off
+   the portal as `<Your Name>.xlsx` (e.g. `NOEL_ANTONY_ALEX.xlsx`), falling
+   back to `activity_points.xlsx` if your name can't be found on the page:
    - **Summary** sheet — total approved points, points broken down into
      Professional / Extracurricular / Leadership (auto-bucketed from each
      entry's own category label) with approved / pending / rejected counts
@@ -39,7 +41,10 @@ script does that for you and builds a formatted report.
      retries, so you can see what to re-check.
 
 Progress is saved to disk after *every* combination, so an interruption
-never loses what's already been scraped.
+never loses what's already been scraped. If a file with that name already
+exists, it's simply replaced — unless it's currently open in Excel, in
+which case a new file with a numbered suffix (e.g. `NOEL_ANTONY_ALEX_1.xlsx`)
+is created instead so the script never crashes over it.
 
 ## Important: read before running
 
@@ -83,7 +88,8 @@ python activity_points_tracker.py
 - The script waits (no timeout) until you reach the student home page,
   then takes over from there automatically.
 - Progress prints to the console as it works through each combination.
-- When it finishes (or if you stop it early), open `activity_points.xlsx` — the Summary tab is first.
+- When it finishes (or if you stop it early), open the generated
+  `<Your Name>.xlsx` — the Summary tab is first.
 
 ## Files
 
