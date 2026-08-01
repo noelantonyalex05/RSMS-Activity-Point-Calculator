@@ -66,14 +66,6 @@ is created instead so the script never crashes over it.
 Requires Python 3.8+.
 
 ```
-pip install playwright openpyxl
-playwright install chromium
-```
-
-On Windows, if `playwright` isn't recognized as a command after
-installing, run it through Python instead:
-
-```
 python -m pip install playwright openpyxl
 python -m playwright install chromium
 ```
