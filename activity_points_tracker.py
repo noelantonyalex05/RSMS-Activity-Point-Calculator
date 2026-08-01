@@ -23,6 +23,11 @@ Confirmed site behavior:
   evidence"/"Rating By Faculty"). Columns are matched BY NAME so every
   value lands in the right place regardless of which category it came
   from.
+- Occasionally a combo's dropdowns stop populating mid-run - a known
+  RSMS session glitch. When this happens repeatedly on the same combo,
+  the script automatically closes the browser, has you log in again,
+  and resumes from that exact combo (instead of skipping it), up to a
+  small number of attempts before finally giving up on it.
 
 Output: <STUDENT NAME>.xlsx (the name is read from Home.asp's "Logged In
 User : ..." line; falls back to activity_points.xlsx if it can't be
@@ -55,7 +60,6 @@ import time
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from playwright.sync_api import TimeoutError as PWTimeoutError
 from playwright.sync_api import sync_playwright
 
 # ----------------------------------------------------------------------
@@ -71,6 +75,7 @@ OUTPUT_FILE = "activity_points.xlsx"
 DELAY_SECONDS = 1.0            # pause between combinations, be polite to the server
 OPTIONS_WAIT_TIMEOUT = 15      # seconds to wait for a <select>'s options to populate
 MAX_RETRIES_PER_COMBO = 2      # attempts before a combo is logged to Skipped
+MAX_RELOGIN_ATTEMPTS_PER_COMBO = 3  # fresh-login retries before a stuck combo is skipped
 
 # Keyword -> bucket name, matched case-insensitively against the table's
 # own "Category" column value (e.g. "Professional and Co-curricular").
@@ -579,6 +584,15 @@ def save_workbook(wb, path):
 # Playwright automation
 # ----------------------------------------------------------------------
 
+class DropdownNotPopulatedError(Exception):
+    """Raised when a <select>'s options don't populate in time. On this
+    portal that's a specific, recognizable session glitch on the
+    website's end - reloading the same page doesn't fix it, but a fresh
+    login does - so it's kept distinct from other/generic failures so
+    main() can react to it differently."""
+    pass
+
+
 def get_select_options(select_locator):
     """Return list of (value, label) for every real option in a <select>."""
     options = select_locator.locator("option").all()
@@ -601,7 +615,7 @@ def wait_for_options_populated(select_locator, min_options=1, timeout_s=OPTIONS_
         if count > min_options:
             return
         time.sleep(0.2)
-    raise TimeoutError(
+    raise DropdownNotPopulatedError(
         f"Select did not populate options within {timeout_s}s (had {count})"
     )
 
@@ -644,6 +658,66 @@ def scrape_one_combo(page, form_url, class_val, cat_val):
     return header_cells, scraped
 
 
+def login_and_open_form(p):
+    """Launches a fresh browser, waits for the user to log in manually
+    with Google, opens the Activity Point Form, and confirms both
+    dropdowns are populated. Returns everything needed to (re)start
+    scraping: (browser, context, page, form_url, student_name,
+    class_options, category_options).
+
+    Used both for the initial login and to recover from the RSMS session
+    glitch where a combo's dropdowns stop populating - closing the
+    browser and logging in fresh is, per the site's usual behavior, what
+    clears it."""
+    browser = p.chromium.launch(headless=False)
+    context = browser.new_context()
+    page = context.new_page()
+
+    page.goto(LOGIN_URL)
+    print(">>> Please log in with Google manually.")
+    page.wait_for_url("**/Home.asp", timeout=0)
+    print(">>> Login detected.")
+    time.sleep(1.5)  # let the frameset's child frames finish loading
+
+    student_name = get_student_name(page)
+    if student_name:
+        print(f">>> Logged in as: {student_name}")
+    else:
+        print(">>> Couldn't find the student's name on Home.asp - "
+              "using a generic output filename instead.")
+
+    print(">>> Navigating to Activity Point Form...")
+    page.click("text=Activity Point Form")
+    page.wait_for_load_state("load")
+    form_url = page.url
+
+    class_select = page.locator("select").nth(0)
+    category_select = page.locator("select").nth(1)
+    wait_for_options_populated(class_select)
+    wait_for_options_populated(category_select)
+
+    class_options = get_select_options(class_select)
+    category_options = get_select_options(category_select)
+
+    return browser, context, page, form_url, student_name, class_options, category_options
+
+
+def login_and_open_form_with_retry(p, attempts=2):
+    """Same as login_and_open_form, but if the dropdowns still don't
+    populate right after a completely fresh login (rare, but possible if
+    the portal itself is down rather than just this session), tries
+    logging in again a couple of times before giving up for good."""
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return login_and_open_form(p)
+        except DropdownNotPopulatedError as e:
+            last_error = e
+            print(f">>> Form dropdowns still empty right after a fresh "
+                  f"login (attempt {attempt}/{attempts}): {e}")
+    raise last_error
+
+
 # ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
@@ -658,37 +732,10 @@ def main():
     skipped_rows = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
-        page = context.new_page()
-
-        page.goto(LOGIN_URL)
-        print(">>> Please log in with Google manually.")
-        page.wait_for_url("**/Home.asp", timeout=0)
-        print(">>> Login detected.")
-        time.sleep(1.5)  # let the frameset's child frames finish loading
-
-        student_name = get_student_name(page)
-        if student_name:
-            print(f">>> Logged in as: {student_name}")
-        else:
-            print(">>> Couldn't find the student's name on Home.asp - "
-                  "using a generic output filename instead.")
+        (browser, context, page, form_url, student_name,
+         class_options, category_options) = login_and_open_form_with_retry(p)
 
         output_path = resolve_output_path(build_output_filename(student_name))
-
-        print(">>> Navigating to Activity Point Form...")
-        page.click("text=Activity Point Form")
-        page.wait_for_load_state("load")
-        form_url = page.url
-
-        class_select = page.locator("select").nth(0)
-        category_select = page.locator("select").nth(1)
-        wait_for_options_populated(class_select)
-        wait_for_options_populated(category_select)
-
-        class_options = get_select_options(class_select)
-        category_options = get_select_options(category_select)
 
         print(f">>> Found {len(class_options)} class codes, "
               f"{len(category_options)} categories "
@@ -696,10 +743,14 @@ def main():
 
         combos = [(c, a) for c in class_options for a in category_options]
 
-        for i, ((class_val, class_label), (cat_val, cat_label)) in enumerate(combos, 1):
+        i = 0
+        relogin_attempts_this_combo = 0
+        while i < len(combos):
+            (class_val, class_label), (cat_val, cat_label) = combos[i]
             last_error = None
             header_cells = None
             scraped_rows = None
+            dropdown_failure = False
 
             for attempt in range(1, MAX_RETRIES_PER_COMBO + 1):
                 try:
@@ -707,24 +758,66 @@ def main():
                         page, form_url, class_val, cat_val
                     )
                     last_error = None
+                    dropdown_failure = False
                     break
-                except (PWTimeoutError, TimeoutError, Exception) as e:
+                except DropdownNotPopulatedError as e:
                     last_error = e
-                    print(f"  [{i}/{len(combos)}] class={class_label} "
+                    dropdown_failure = True
+                    print(f"  [{i + 1}/{len(combos)}] class={class_label} "
+                          f"category={cat_label} -> attempt {attempt} failed "
+                          f"(dropdown didn't populate): {e}")
+                    time.sleep(1.5)
+                except Exception as e:
+                    last_error = e
+                    dropdown_failure = False
+                    print(f"  [{i + 1}/{len(combos)}] class={class_label} "
                           f"category={cat_label} -> attempt {attempt} failed: {e}")
                     time.sleep(1.5)
 
+            # Empty dropdowns after every retry is the known RSMS session
+            # glitch - closing the browser and logging back in usually
+            # clears it. Retry the SAME combo afterwards rather than
+            # skipping it, up to a small cap so a combo that's genuinely
+            # broken (not a session issue) doesn't loop forever.
+            if (dropdown_failure and last_error is not None
+                    and relogin_attempts_this_combo < MAX_RELOGIN_ATTEMPTS_PER_COMBO):
+                relogin_attempts_this_combo += 1
+                print(f">>> Dropdowns came back empty after {MAX_RETRIES_PER_COMBO} "
+                      f"attempts on class={class_label}, category={cat_label}. "
+                      f"This is the known RSMS session glitch - closing the "
+                      f"browser and logging in again "
+                      f"(relogin {relogin_attempts_this_combo}/"
+                      f"{MAX_RELOGIN_ATTEMPTS_PER_COMBO} for this combination)...")
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+
+                (browser, context, page, form_url, _,
+                 class_options, category_options) = login_and_open_form_with_retry(p)
+
+                print(f">>> Logged back in. Resuming from class={class_label}, "
+                      f"category={cat_label}...")
+                continue  # retry the same combo, i stays put
+
+            relogin_attempts_this_combo = 0  # moving on, one way or another
+
             if last_error is not None:
-                print(f"  [{i}/{len(combos)}] SKIPPING class={class_label} "
+                reason = str(last_error)
+                if dropdown_failure:
+                    reason += (f" (persisted through "
+                               f"{MAX_RELOGIN_ATTEMPTS_PER_COMBO} relogin attempt(s))")
+                print(f"  [{i + 1}/{len(combos)}] SKIPPING class={class_label} "
                       f"category={cat_label} after {MAX_RETRIES_PER_COMBO} attempts")
-                skipped_rows.append([class_label, cat_label, str(last_error)])
+                skipped_rows.append([class_label, cat_label, reason])
                 write_skipped_sheet(wb, skipped_rows)
                 output_path = save_workbook(wb, output_path)
+                i += 1
                 time.sleep(DELAY_SECONDS)
                 continue
 
             if not scraped_rows:
-                print(f"  [{i}/{len(combos)}] class={class_label} "
+                print(f"  [{i + 1}/{len(combos)}] class={class_label} "
                       f"category={cat_label} -> no submissions")
             else:
                 for cells in scraped_rows:
@@ -745,12 +838,13 @@ def main():
                     )
                     builder.write_row(row_dict, fill=fill)
 
-                print(f"  [{i}/{len(combos)}] class={class_label} "
+                print(f"  [{i + 1}/{len(combos)}] class={class_label} "
                       f"category={cat_label} -> {len(scraped_rows)} row(s)")
 
             builder.autofit()
             stats.write_sheet(wb)
             output_path = save_workbook(wb, output_path)
+            i += 1
             time.sleep(DELAY_SECONDS)
 
         builder.autofit()
