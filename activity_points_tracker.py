@@ -74,7 +74,7 @@ LOGIN_URL = "https://rajagiritech.ac.in/stud/KTU/Student/studentlogin/login.php"
 OUTPUT_FILE = "activity_points.xlsx"
 DELAY_SECONDS = 1.0            # pause between combinations, be polite to the server
 OPTIONS_WAIT_TIMEOUT = 15      # seconds to wait for a <select>'s options to populate
-MAX_RETRIES_PER_COMBO = 2      # attempts before a combo is logged to Skipped
+MAX_RETRIES_PER_COMBO = 1      # attempts before a combo is logged to Skipped
 MAX_RELOGIN_ATTEMPTS_PER_COMBO = 3  # fresh-login retries before a stuck combo is skipped
 
 # Keyword -> bucket name, matched case-insensitively against the table's
