@@ -17,12 +17,19 @@ script does that for you and builds a formatted report.
 1. Opens a real Chrome window and takes you to the RSMS login page.
 2. Waits for you to log in with Google yourself (this can't and shouldn't
    be automated — no credentials are stored or entered by the script).
-3. Once you land on the student home page, it opens the Activity Point
-   Form and reads every Class Code and Category option.
+3. Once you land on the student home page, it reads your name off it
+   (used for the output filename, see below) and opens the Activity Point
+   Form, reading every Class Code and Category option.
 4. For each combination, it clicks **"Add Activity"** — which only
    *reveals* the entry form and any existing submissions table, it does
    **not** submit anything — and scrapes the results table if one appears.
-5. Writes everything to an Excel file named after you — read straight off
+5. If a combination's dropdowns come back empty repeatedly — a known RSMS
+   session glitch — the script closes the browser, walks you through
+   logging in again, and resumes from that exact combination instead of
+   skipping it. This is retried a few times before finally giving up and
+   marking the combination as skipped, so a truly broken combination
+   can't stall the whole run.
+6. Writes everything to an Excel file named after you — read straight off
    the portal as `<Your Name>.xlsx` (e.g. `NOEL_ANTONY_ALEX.xlsx`), falling
    back to `activity_points.xlsx` if your name can't be found on the page:
    - **Summary** sheet — total approved points, points broken down into
@@ -54,6 +61,10 @@ is created instead so the script never crashes over it.
 - **Google login is manual, on purpose.** A visible browser window opens
   and waits for you to sign in yourself. Nothing about your credentials
   is captured or stored.
+- **Self-healing on session glitches.** If the site's dropdowns stop
+  populating for a stretch, the script will close and reopen the browser
+  automatically, prompt you to log in again, and pick up exactly where
+  it left off.
 - **This automates your own account for your own use.** Be mindful of
   your institution's terms of use before running bulk automation against
   any college system, and keep the request pace reasonable (the default
@@ -64,6 +75,14 @@ is created instead so the script never crashes over it.
 ## Setup
 
 Requires Python 3.8+.
+
+```
+pip install playwright openpyxl
+playwright install chromium
+```
+
+On Windows, if `playwright` isn't recognized as a command after
+installing, run it through Python instead:
 
 ```
 python -m pip install playwright openpyxl
