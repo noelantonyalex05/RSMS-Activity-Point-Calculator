@@ -659,8 +659,10 @@ def scrape_one_combo(page, form_url, class_val, cat_val):
 
 
 def login_and_open_form(p):
-    """Launches a fresh browser, waits for the user to log in manually
-    with Google, opens the Activity Point Form, and confirms both
+    """Launches a visible browser, waits for the user to log in manually
+    with Google. Once Home.asp is reached, closes the visible browser window,
+    switches to a headless browser running in the background using the saved
+    session cookies, opens the Activity Point Form, and confirms both
     dropdowns are populated. Returns everything needed to (re)start
     scraping: (browser, context, page, form_url, student_name,
     class_options, category_options).
@@ -670,36 +672,68 @@ def login_and_open_form(p):
     browser and logging in fresh is, per the site's usual behavior, what
     clears it."""
     browser = p.chromium.launch(headless=False)
-    context = browser.new_context()
-    page = context.new_page()
+    try:
+        context = browser.new_context()
+        page = context.new_page()
 
-    page.goto(LOGIN_URL)
-    print(">>> Please log in with Google manually.")
-    page.wait_for_url("**/Home.asp", timeout=0)
-    print(">>> Login detected.")
-    time.sleep(1.5)  # let the frameset's child frames finish loading
+        page.goto(LOGIN_URL)
+        print(">>> Please log in with Google manually.")
+        page.wait_for_url("**/Home.asp", timeout=0)
+        print(">>> Login detected.")
+        time.sleep(1.5)  # let the frameset's child frames finish loading
 
-    student_name = get_student_name(page)
-    if student_name:
-        print(f">>> Logged in as: {student_name}")
-    else:
-        print(">>> Couldn't find the student's name on Home.asp - "
-              "using a generic output filename instead.")
+        student_name = get_student_name(page)
+        if student_name:
+            print(f">>> Logged in as: {student_name}")
+        else:
+            print(">>> Couldn't find the student's name on Home.asp - "
+                  "using a generic output filename instead.")
 
-    print(">>> Navigating to Activity Point Form...")
-    page.click("text=Activity Point Form")
-    page.wait_for_load_state("load")
-    form_url = page.url
+        home_url = page.url
+        storage = context.storage_state()
+    finally:
+        browser.close()
 
-    class_select = page.locator("select").nth(0)
-    category_select = page.locator("select").nth(1)
-    wait_for_options_populated(class_select)
-    wait_for_options_populated(category_select)
+    print(">>> Reached home page. Closing browser window; continuing in background...")
+    browser = p.chromium.launch(headless=True)
+    try:
+        context = browser.new_context(storage_state=storage)
+        page = context.new_page()
 
-    class_options = get_select_options(class_select)
-    category_options = get_select_options(category_select)
+        print(">>> Navigating to Activity Point Form...")
+        page.goto(home_url)
+        page.wait_for_load_state("load")
+        time.sleep(1.5)
 
-    return browser, context, page, form_url, student_name, class_options, category_options
+        try:
+            page.click("text=Activity Point Form", timeout=5000)
+        except Exception:
+            clicked = False
+            for frame in page.frames:
+                try:
+                    frame.click("text=Activity Point Form", timeout=3000)
+                    clicked = True
+                    break
+                except Exception:
+                    continue
+            if not clicked:
+                raise
+
+        page.wait_for_load_state("load")
+        form_url = page.url
+
+        class_select = page.locator("select").nth(0)
+        category_select = page.locator("select").nth(1)
+        wait_for_options_populated(class_select)
+        wait_for_options_populated(category_select)
+
+        class_options = get_select_options(class_select)
+        category_options = get_select_options(category_select)
+
+        return browser, context, page, form_url, student_name, class_options, category_options
+    except Exception:
+        browser.close()
+        raise
 
 
 def login_and_open_form_with_retry(p, attempts=2):
