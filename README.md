@@ -18,8 +18,9 @@ script does that for you and builds a formatted report.
 2. Waits for you to log in with Google yourself (this can't and shouldn't
    be automated — no credentials are stored or entered by the script).
 3. Once you land on the student home page, it reads your name off it
-   (used for the output filename, see below) and opens the Activity Point
-   Form, reading every Class Code and Category option.
+   (used for the output filename, see below), closes the visible browser
+   window, and seamlessly transitions to headless background mode to open
+   the Activity Point Form and read every Class Code and Category option.
 4. For each combination, it clicks **"Add Activity"** — which only
    *reveals* the entry form and any existing submissions table, it does
    **not** submit anything — and scrapes the results table if one appears.
@@ -89,7 +90,7 @@ python activity_points_tracker.py
 
 - A Chrome window opens to the RSMS login page — log in with Google.
 - The script waits (no timeout) until you reach the student home page,
-  then takes over from there automatically.
+  closes the browser window, and takes over in the background automatically.
 - Progress prints to the console as it works through each combination.
 - When it finishes (or if you stop it early), open the generated
   `<Your Name>.xlsx` — the Summary tab is first.
